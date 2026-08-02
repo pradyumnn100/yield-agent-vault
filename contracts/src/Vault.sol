@@ -27,6 +27,28 @@ contract Vault is ERC4626, Ownable {
     activeStrategy = IStrategyAdapter(newStrategy);
 }
 
+    mapping(address => bool) public isApprovedStrategy;
+
+    function approveStrategy(address strategy) external onlyOwner {
+    isApprovedStrategy[strategy] = true;
+}
+
+    function rebalance(address newStrategy) external onlyOwner {
+    require(isApprovedStrategy[newStrategy], "not whitelisted");
+    uint256 amount = activeStrategy.totalDeposited();
+
+    if (amount > 0) {
+        activeStrategy.withdraw(amount);
+        IERC20(asset()).forceApprove(newStrategy, amount);
+    }
+
+    activeStrategy = IStrategyAdapter(newStrategy);
+
+    if (amount > 0) {
+        activeStrategy.deposit(amount);
+    }
+}
+
     function totalAssets() public view override returns (uint256) {
         return activeStrategy.totalDeposited();
     }
