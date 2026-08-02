@@ -38,7 +38,13 @@ contract CompoundAdapter is IStrategyAdapter {
         return comet.balanceOf(address(this));
     }
 
-    function currentAPY() external pure returns (uint256) {
-        return 0; // wired up in a later phase
-    }
+    uint256 public mockAPY;
+
+function setMockAPY(uint256 apy) external {
+    mockAPY = apy;
+}
+
+function currentAPY() external view returns (uint256) {
+    return mockAPY;
+}
 }

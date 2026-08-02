@@ -40,7 +40,13 @@ contract AaveAdapter is IStrategyAdapter {
         return aToken.balanceOf(address(this)); // aTokens are 1:1 with underlying + accrued interest
     }
 
-    function currentAPY() external pure returns (uint256) {
-        return 0; // wired up properly in a later phase
-    }
+    uint256 public mockAPY;
+
+function setMockAPY(uint256 apy) external {
+    mockAPY = apy;
+}
+
+function currentAPY() external view returns (uint256) {
+    return mockAPY;
+}
 }
