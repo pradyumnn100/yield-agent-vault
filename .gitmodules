@@ -1,0 +1,3 @@
+[submodule "contracts/lib/aave-address-book"]
+	path = contracts/lib/aave-address-book
+	url = https://github.com/bgd-labs/aave-address-book
