@@ -32,6 +32,7 @@ contract VaultRebalanceTest is Test {
         compoundAdapter = new CompoundAdapter(address(dai), address(compoundPool), address(vault));
 
         vault.setStrategy(address(aaveAdapter));
+        vault.grantRole(vault.AGENT_ROLE(), address(this));
         vault.approveStrategy(address(compoundAdapter));
 
         dai.transfer(user, 1_000e18);
