@@ -3,17 +3,27 @@ import "dotenv/config";
 import * as fs from "fs";
 import * as path from "path";
 import { VAULT_ABI, ADAPTER_ABI } from "./abi";
+import { assessRebalanceRisk, RiskAssessment } from "./riskAssessor";
 
-const MIN_APY_DELTA = 50n; // basis points
+const MIN_APY_DELTA = 50n;
+const MIN_LLM_CONFIDENCE = 0.5;
+const MAX_HISTORY = 10;
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS ?? 60_000);
 const LOG_PATH = path.join(__dirname, "..", "logs", "rebalance-log.jsonl");
+
+interface APYSnapshot {
+  timestamp: string;
+  aaveAPY: string;
+  compoundAPY: string;
+}
 
 interface CycleResult {
   timestamp: string;
   activeStrategy: string;
   aaveAPY: string;
   compoundAPY: string;
-  decision: "REBALANCE" | "HOLD";
+  decision: "REBALANCE" | "HOLD" | "VETOED_BY_LLM";
+  llmAssessment?: RiskAssessment;
   txHash?: string;
   txStatus?: "SUCCESS" | "FAILED";
   error?: string;
@@ -29,7 +39,8 @@ async function runOnce(
   aaveAdapter: ethers.Contract,
   compoundAdapter: ethers.Contract,
   aaveAdapterAddress: string,
-  compoundAdapterAddress: string
+  compoundAdapterAddress: string,
+  history: APYSnapshot[]
 ): Promise<CycleResult> {
   const timestamp = new Date().toISOString();
 
@@ -42,10 +53,16 @@ async function runOnce(
 
     console.log(`[${timestamp}] Active: ${activeStrategy} | Aave: ${aaveAPY} | Compound: ${compoundAPY}`);
 
+    const priorHistory = [...history];
+    history.push({ timestamp, aaveAPY: aaveAPY.toString(), compoundAPY: compoundAPY.toString() });
+    if (history.length > MAX_HISTORY) history.shift();
+
     const isAaveActive = activeStrategy.toLowerCase() === aaveAdapterAddress.toLowerCase();
     const currentAPY = isAaveActive ? aaveAPY : compoundAPY;
     const candidateAddress = isAaveActive ? compoundAdapterAddress : aaveAdapterAddress;
     const candidateAPY = isAaveActive ? compoundAPY : aaveAPY;
+    const candidateName = isAaveActive ? "Compound" : "Aave";
+    const currentName = isAaveActive ? "Aave" : "Compound";
 
     const result: CycleResult = {
       timestamp,
@@ -56,16 +73,31 @@ async function runOnce(
     };
 
     if (candidateAPY > currentAPY + MIN_APY_DELTA) {
-      console.log(`[${timestamp}] Decision: REBALANCE -> ${candidateAddress}`);
-      result.decision = "REBALANCE";
+      console.log(`[${timestamp}] Heuristic: ${candidateName} beats ${currentName} by threshold. Consulting risk layer...`);
 
-      const tx = await vault.rebalance!(candidateAddress);
-      result.txHash = tx.hash;
-      console.log(`[${timestamp}] Tx sent: ${tx.hash}`);
+      const assessment = await assessRebalanceRisk(
+        candidateName,
+        candidateAPY.toString(),
+        currentName,
+        currentAPY.toString(),
+        priorHistory
+      );
 
-      const receipt = await tx.wait();
-      result.txStatus = receipt?.status === 1 ? "SUCCESS" : "FAILED";
-      console.log(`[${timestamp}] Confirmed: ${result.txStatus}`);
+      result.llmAssessment = assessment;
+      console.log(`[${timestamp}] LLM: trust=${assessment.trust} confidence=${assessment.confidence} — ${assessment.reasoning}`);
+
+      if (assessment.trust && assessment.confidence >= MIN_LLM_CONFIDENCE) {
+        result.decision = "REBALANCE";
+        const tx = await vault.rebalance!(candidateAddress);
+        result.txHash = tx.hash;
+        console.log(`[${timestamp}] Tx sent: ${tx.hash}`);
+        const receipt = await tx.wait();
+        result.txStatus = receipt?.status === 1 ? "SUCCESS" : "FAILED";
+        console.log(`[${timestamp}] Confirmed: ${result.txStatus}`);
+      } else {
+        result.decision = "VETOED_BY_LLM";
+        console.log(`[${timestamp}] Decision: HOLD — LLM vetoed the move`);
+      }
     } else {
       console.log(`[${timestamp}] Decision: HOLD`);
     }
@@ -97,6 +129,9 @@ async function main() {
   if (!rpcUrl || !agentKey || !vaultAddress || !aaveAdapterAddress || !compoundAdapterAddress) {
     throw new Error("Missing required .env values");
   }
+  if (!process.env.GEMINI_API_KEY) {
+    throw new Error("Missing GEMINI_API_KEY in .env");
+  }
 
   const provider = new ethers.JsonRpcProvider(rpcUrl);
   const agentWallet = new ethers.Wallet(agentKey, provider);
@@ -107,7 +142,8 @@ async function main() {
   console.log(`Agent wallet: ${agentWallet.address}`);
   console.log(`Polling every ${POLL_INTERVAL_MS / 1000}s. Logs: ${LOG_PATH}`);
 
-  let running = false; // prevents overlapping cycles if one run takes longer than the interval
+  const history: APYSnapshot[] = [];
+  let running = false;
 
   const tick = async () => {
     if (running) {
@@ -115,11 +151,11 @@ async function main() {
       return;
     }
     running = true;
-    await runOnce(vault, aaveAdapter, compoundAdapter, aaveAdapterAddress, compoundAdapterAddress);
+    await runOnce(vault, aaveAdapter, compoundAdapter, aaveAdapterAddress, compoundAdapterAddress, history);
     running = false;
   };
 
-  await tick(); // run immediately on startup, then on the interval
+  await tick();
   const interval = setInterval(tick, POLL_INTERVAL_MS);
 
   process.on("SIGINT", () => {
