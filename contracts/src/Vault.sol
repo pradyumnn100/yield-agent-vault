@@ -14,6 +14,11 @@ contract Vault is ERC4626, AccessControl {
     bytes32 public constant AGENT_ROLE = keccak256("AGENT_ROLE");
 
     IStrategyAdapter public activeStrategy;
+    uint256 public constant MAX_FEE_BPS = 500; // hard cap at 5%, sanity bound against admin error
+    uint256 public withdrawalFeeBps; // e.g. 50 = 0.5%. Defaults to 0.
+    address public feeCollector;
+
+event FeeCollected(address indexed collector, uint256 amount);
     mapping(address => bool) public isApprovedStrategy;
 
     constructor(
@@ -33,6 +38,16 @@ contract Vault is ERC4626, AccessControl {
     function approveStrategy(address strategy) external onlyRole(DEFAULT_ADMIN_ROLE) {
         isApprovedStrategy[strategy] = true;
     }
+
+    function setWithdrawalFee(uint256 feeBps) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(feeBps <= MAX_FEE_BPS, "fee too high");
+            withdrawalFeeBps = feeBps;
+}
+
+    function setFeeCollector(address collector) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(collector != address(0), "zero address");
+            feeCollector = collector;
+}
 
     function rebalance(address newStrategy) external onlyRole(AGENT_ROLE) {
         require(isApprovedStrategy[newStrategy], "not whitelisted");
@@ -61,7 +76,23 @@ contract Vault is ERC4626, AccessControl {
     }
 
     function _withdraw(address caller, address receiver, address owner, uint256 assets, uint256 shares) internal override {
-        activeStrategy.withdraw(assets);
-        super._withdraw(caller, receiver, owner, assets, shares);
+    activeStrategy.withdraw(assets); // pull back from strategy into the vault, unchanged from before
+
+    if (caller != owner) {
+        _spendAllowance(owner, caller, shares);
+    }
+    _burn(owner, shares);
+
+    uint256 fee = (assets * withdrawalFeeBps) / 10_000;
+    uint256 netAssets = assets - fee;
+
+    IERC20(asset()).safeTransfer(receiver, netAssets);
+
+    if (fee > 0 && feeCollector != address(0)) {
+        IERC20(asset()).safeTransfer(feeCollector, fee);
+        emit FeeCollected(feeCollector, fee);
+    }
+
+    emit Withdraw(caller, receiver, owner, assets, shares);
     }
 }
