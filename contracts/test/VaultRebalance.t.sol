@@ -33,6 +33,8 @@ contract VaultRebalanceTest is Test {
 
         vault.setStrategy(address(aaveAdapter));
         vault.grantRole(vault.AGENT_ROLE(), address(this));
+        vault.proposeStrategy(address(compoundAdapter));
+        vm.warp(block.timestamp + vault.STRATEGY_TIMELOCK() + 1);
         vault.approveStrategy(address(compoundAdapter));
 
         dai.transfer(user, 1_000e18);
@@ -62,5 +64,13 @@ contract VaultRebalanceTest is Test {
 
         assertEq(dai.balanceOf(user), 1_000e18);
         console.log("User balance after withdraw:", dai.balanceOf(user));
+    }
+
+    function testCannotApproveStrategyBeforeTimelock() public {
+        address fakeStrategy = address(0x9999);
+        vault.proposeStrategy(fakeStrategy);
+
+        vm.expectRevert("timelock not elapsed");
+        vault.approveStrategy(fakeStrategy);
     }
 }
