@@ -19,6 +19,7 @@ contract CompoundAdapter is IStrategyAdapter {
     }
 
     constructor(address asset_, address comet_, address vault_) {
+        require(vault_ != address(0), "zero address");
         asset = IERC20(asset_);
         comet = IComet(comet_);
         vault = vault_;

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -8,7 +9,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {IStrategyAdapter} from "./IStrategyAdapter.sol";
 
-contract Vault is ERC4626, AccessControl {
+contract Vault is ERC4626, AccessControl, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     bytes32 public constant AGENT_ROLE = keccak256("AGENT_ROLE");
@@ -49,7 +50,7 @@ event FeeCollected(address indexed collector, uint256 amount);
             feeCollector = collector;
 }
 
-    function rebalance(address newStrategy) external onlyRole(AGENT_ROLE) {
+    function rebalance(address newStrategy) external onlyRole(AGENT_ROLE) nonReentrant {
         require(isApprovedStrategy[newStrategy], "not whitelisted");
         uint256 amount = activeStrategy.totalDeposited();
 

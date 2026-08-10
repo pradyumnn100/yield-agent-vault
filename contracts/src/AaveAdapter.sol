@@ -20,6 +20,7 @@ contract AaveAdapter is IStrategyAdapter {
     IPool public immutable AAVE_POOL;
 
     constructor(address asset_, address aToken_, address vault_, address pool_) {
+    require(vault_ != address(0), "zero address");
     asset = IERC20(asset_);
     aToken = IERC20(aToken_);
     vault = vault_;
