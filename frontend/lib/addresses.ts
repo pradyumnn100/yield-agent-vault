@@ -1,0 +1,2 @@
+export const VAULT_ADDRESS = "0xE3E4de3aE11e930beF66185a62879574FF9Bc224" as const;
+export const DAI_ADDRESS = "0x0ffb3A169dBB6a3DC1E9d819c838D2a2A3235191" as const;
